@@ -12,7 +12,6 @@ import threading
 API_TOKEN = '8502395795:AAEO--Am5pbn2XL5X0SOV1gEBpzOHOErojk'
 OCR_API_KEY = 'K82846104288957'
 
-# Сервер для Render
 class HealthCheck(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200); self.end_headers()
@@ -26,7 +25,6 @@ bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
 
 def compress_image(input_path):
-    """Сжимаем фото для ускорения работы"""
     try:
         with Image.open(input_path) as img:
             img.thumbnail((1500, 1500))
@@ -38,35 +36,34 @@ def compress_image(input_path):
 def extract_data(text):
     text_upper = text.upper()
     
-    # 1. ЧИСТКА для поиска VIN
-    # Убираем слово VIN и CERTIFICAT, чтобы они не прилипали к номеру
-    clean_text_for_vin = re.sub(r'[^A-Z0-9]', '', text_upper).replace('VIN', '').replace('CERTIFICAT', '')
+    # --- ИСПРАВЛЕНИЕ VIN ---
+    # Сначала удаляем само слово VIN и скобки, чтобы они не попали в номер
+    # Также убираем слово CERTIFICAT
+    text_clean_vin = text_upper.replace('(VIN)', '').replace('VIN', '').replace('CERTIFICAT', '')
     
-    # Ищем 17 символов подряд (обычно VIN начинается не с 0)
-    vin_match = re.search(r'[A-HJ-NPR-Z0-9]{17}', clean_text_for_vin)
+    # Оставляем только буквы и цифры
+    clean_text = re.sub(r'[^A-Z0-9]', '', text_clean_vin)
+    
+    # Теперь ищем 17 символов. Так как слова VIN уже нет, бот найдет чистый номер
+    vin_match = re.search(r'[A-HJ-NPR-Z0-9]{17}', clean_text)
     vin = vin_match.group(0) if vin_match else "Не найден"
 
-    # 2. ГОСНОМЕР
-    # Убираем пробелы, чтобы найти "E 056 HY 73" как "E056HY73"
+    # --- ГОСНОМЕР ---
     clean_text_plate = text_upper.replace(' ', '')
     plate_match = re.search(r'[ABCEHKMOPTXYАВЕКМНОРСТХУ]\d{3}[ABCEHKMOPTXYАВЕКМНОРСТХУ]{2}\d{2,3}', clean_text_plate)
     plate = plate_match.group(0) if plate_match else "Не найден"
     
-    # 3. МАРКА АВТО (Умный поиск)
+    # --- МАРКА (SKODA YETI) ---
     model = "Не определена"
-    # Список частых брендов (дополните при желании)
-    brands = ['SKODA', 'ШКОДА', 'KIA', 'КИА', 'HYUNDAI', 'ХЕНДАЙ', 'TOYOTA', 'VOLKSWAGEN', 'LADA', 'ВАЗ', 'RENAULT', 'NISSAN', 'BMW', 'MERCEDES']
+    brands = ['SKODA', 'ШКОДА', 'KIA', 'КИА', 'HYUNDAI', 'TOYOTA', 'LADA', 'ВАЗ', 'RENAULT', 'NISSAN', 'BMW', 'MERCEDES', 'VOLKSWAGEN']
     
-    # Сначала ищем знакомые слова
     for brand in brands:
         if brand in text_upper:
-            model = brand # Нашли бренд!
-            # Проверяем модели рядом
+            model = brand
             if brand in ['SKODA', 'ШКОДА'] and ('YETI' in text_upper or 'ЙЕТИ' in text_upper):
                 model = "SKODA YETI"
             break
             
-    # Если бренд не нашли, пробуем вытащить из строки "Марка, модель"
     if model == "Не определена":
         lines = text.split('\n')
         for i, line in enumerate(lines):
@@ -75,19 +72,16 @@ def extract_data(text):
                 if len(candidate) > 2:
                     model = candidate
                     break
-                elif i+1 < len(lines): # Смотрим следующую строку
-                    model = lines[i+1].strip()
-                    break
 
     return {"plate": plate, "vin": vin, "model": model}
 
 @dp.message(Command("start"))
 async def start(m: types.Message):
-    await m.answer("🚙 Бот готов! Пришлите фото СТС.")
+    await m.answer("✅ Бот обновлен! Пришлите фото СТС.")
 
 @dp.message(F.photo)
 async def handle_photo(message: types.Message):
-    status_msg = await message.answer("⚙️ Обрабатываю фото...")
+    status_msg = await message.answer("🔍 Распознаю данные...")
     photo = message.photo[-1]
     original_path = f"{photo.file_id}.jpg"
     
@@ -105,13 +99,13 @@ async def handle_photo(message: types.Message):
             raw_text = result['ParsedResults'][0]['ParsedText']
             data = extract_data(raw_text)
             
-            res_text = (f"✅ **Данные из СТС:**\n\n"
+            res_text = (f"✅ **Успешно!**\n\n"
                         f"🚘 **Авто:** {data['model']}\n"
                         f"🔢 **Госномер:** {data['plate']}\n"
-                        f"🆔 **VIN:** `{data['vin']}`")
+                        f"🆔 **VIN:** `{data['vin']}`") # Копируемый текст
             await status_msg.edit_text(res_text, parse_mode="Markdown")
         else:
-            await status_msg.edit_text("❌ Не удалось прочитать текст.")
+            await status_msg.edit_text("❌ Текст не найден.")
     except Exception as e:
         await status_msg.edit_text(f"❌ Ошибка: {e}")
     finally:
