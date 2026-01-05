@@ -8,113 +8,90 @@ from aiogram.filters import Command
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import threading
 
-# --- ВАШИ КЛЮЧИ ---
+# --- КОНФИГУРАЦИЯ ---
 API_TOKEN = '8502395795:AAEO--Am5pbn2XL5X0SOV1gEBpzOHOErojk'
 OCR_API_KEY = 'K82846104288957'
-
-class HealthCheck(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200); self.end_headers()
-        self.wfile.write(b"OK")
-
-def run_health_server():
-    port = int(os.environ.get("PORT", 8080))
-    HTTPServer(('0.0.0.0', port), HealthCheck).serve_forever()
 
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
 
-def compress_image(input_path):
-    try:
-        with Image.open(input_path) as img:
-            img.thumbnail((1500, 1500))
-            output_path = "compressed_" + input_path
-            img.save(output_path, quality=85)
-            return output_path
-    except: return input_path
-
 def extract_data(text):
     text_upper = text.upper()
     
-    # --- ИСПРАВЛЕНИЕ VIN ---
-    # Сначала удаляем само слово VIN и скобки, чтобы они не попали в номер
-    # Также убираем слово CERTIFICAT
-    text_clean_vin = text_upper.replace('(VIN)', '').replace('VIN', '').replace('CERTIFICAT', '')
-    
-    # Оставляем только буквы и цифры
-    clean_text = re.sub(r'[^A-Z0-9]', '', text_clean_vin)
-    
-    # Теперь ищем 17 символов. Так как слова VIN уже нет, бот найдет чистый номер
-    vin_match = re.search(r'[A-HJ-NPR-Z0-9]{17}', clean_text)
-    vin = vin_match.group(0) if vin_match else "Не найден"
-
-    # --- ГОСНОМЕР ---
-    clean_text_plate = text_upper.replace(' ', '')
-    plate_match = re.search(r'[ABCEHKMOPTXYАВЕКМНОРСТХУ]\d{3}[ABCEHKMOPTXYАВЕКМНОРСТХУ]{2}\d{2,3}', clean_text_plate)
+    # 1. ГОСНОМЕР (Ищем формат: буква, 3 цифры, 2 буквы, регион)
+    plate_match = re.search(r'[ABCEHKMOPTXYАВЕКМНОРСТХУ]\d{3}[ABCEHKMOPTXYАВЕКМНОРСТХУ]{2}\d{2,3}', text_upper.replace(' ', ''))
     plate = plate_match.group(0) if plate_match else "Не найден"
+
+    # 2. VIN (Улучшенный поиск)
+    # Удаляем госномер из строки поиска, чтобы он не мешался
+    text_for_vin = text_upper.replace(plate, '')
+    # Убираем все лишнее, кроме латиницы и цифр
+    clean_vin_text = re.sub(r'[^A-Z0-9]', '', text_for_vin)
     
-    # --- МАРКА (SKODA YETI) ---
-    model = "Не определена"
-    brands = ['SKODA', 'ШКОДА', 'KIA', 'КИА', 'HYUNDAI', 'TOYOTA', 'LADA', 'ВАЗ', 'RENAULT', 'NISSAN', 'BMW', 'MERCEDES', 'VOLKSWAGEN']
+    # Ищем 17 символов, которые начинаются на типичные для РФ иномарок буквы (X, Z, W, S, T)
+    # или просто любую комбинацию из 17 знаков, которая НЕ включает в себя мусор
+    vin_match = re.search(r'[XWZTYSJ][A-Z0-9]{16}', clean_vin_text)
     
-    for brand in brands:
-        if brand in text_upper:
-            model = brand
-            if brand in ['SKODA', 'ШКОДА'] and ('YETI' in text_upper or 'ЙЕТИ' in text_upper):
-                model = "SKODA YETI"
-            break
-            
+    if not vin_match:
+        # Запасной вариант: ищем любые 17 символов
+        vin_match = re.search(r'[A-Z0-9]{17}', clean_vin_text)
+        
+    vin = vin_match.group(0) if vin_match else "Не найден"
+    
+    # 3. МАРКА
+    model = "SKODA YETI" if "YETI" in text_upper or "ЙЕТИ" in text_upper else "Не определена"
     if model == "Не определена":
-        lines = text.split('\n')
-        for i, line in enumerate(lines):
-            if "МАРКА" in line.upper():
-                candidate = line.upper().replace("МАРКА", "").replace("МОДЕЛЬ", "").replace(",", "").replace(":", "").strip()
-                if len(candidate) > 2:
-                    model = candidate
-                    break
+        for brand in ['KIA', 'HYUNDAI', 'TOYOTA', 'LADA', 'RENAULT']:
+            if brand in text_upper:
+                model = brand
+                break
 
     return {"plate": plate, "vin": vin, "model": model}
 
-@dp.message(Command("start"))
-async def start(m: types.Message):
-    await m.answer("✅ Бот обновлен! Пришлите фото СТС.")
-
 @dp.message(F.photo)
 async def handle_photo(message: types.Message):
-    status_msg = await message.answer("🔍 Распознаю данные...")
+    status_msg = await message.answer("🔍 Фильтруем данные...")
     photo = message.photo[-1]
-    original_path = f"{photo.file_id}.jpg"
+    path = f"{photo.file_id}.jpg"
+    
+    await bot.download_file((await bot.get_file(photo.file_id)).file_path, path)
     
     try:
-        file = await bot.get_file(photo.file_id)
-        await bot.download_file(file.file_path, original_path)
-        work_path = compress_image(original_path)
-        
-        payload = {'apikey': OCR_API_KEY, 'language': 'rus', 'scale': True, 'OCREngine': 2}
-        with open(work_path, 'rb') as f:
-            r = requests.post('https://api.ocr.space/parse/image', files={'file': f}, data=payload, timeout=30)
-        
-        result = r.json()
-        if result.get('ParsedResults'):
-            raw_text = result['ParsedResults'][0]['ParsedText']
-            data = extract_data(raw_text)
-            
-            res_text = (f"✅ **Успешно!**\n\n"
-                        f"🚘 **Авто:** {data['model']}\n"
-                        f"🔢 **Госномер:** {data['plate']}\n"
-                        f"🆔 **VIN:** `{data['vin']}`") # Копируемый текст
-            await status_msg.edit_text(res_text, parse_mode="Markdown")
-        else:
-            await status_msg.edit_text("❌ Текст не найден.")
-    except Exception as e:
-        await status_msg.edit_text(f"❌ Ошибка: {e}")
-    finally:
-        if os.path.exists(original_path): os.remove(original_path)
-        if os.path.exists("compressed_" + original_path): os.remove("compressed_" + original_path)
+        # Сжатие для ускорения
+        with Image.open(path) as img:
+            img.thumbnail((1500, 1500))
+            img.save("work.jpg", quality=85)
 
-async def main():
-    threading.Thread(target=run_health_server, daemon=True).start()
-    await dp.start_polling(bot)
+        r = requests.post('https://api.ocr.space/parse/image', 
+                          files={'file': open("work.jpg", 'rb')}, 
+                          data={'apikey': OCR_API_KEY, 'language': 'rus', 'OCREngine': 2})
+        
+        raw_text = r.json()['ParsedResults'][0]['ParsedText']
+        data = extract_data(raw_text)
+        
+        res_text = (f"✅ **Данные проверены:**\n\n"
+                    f"🚘 **Авто:** {data['model']}\n"
+                    f"🔢 **Госномер:** {data['plate']}\n"
+                    f"🆔 **VIN:** `{data['vin']}`")
+        
+        # Добавляем кнопку для будущего PDF (пока просто макет)
+        kb = types.InlineKeyboardMarkup(inline_keyboard=[
+            [types.InlineKeyboardButton(text="📄 Сформировать ДКП (PDF)", callback_data="make_pdf")]
+        ])
+        
+        await status_msg.edit_text(res_text, parse_mode="Markdown", reply_markup=kb)
+        
+    except Exception as e:
+        await status_msg.edit_text(f"❌ Ошибка распознавания. Попробуйте еще раз.")
+    finally:
+        if os.path.exists(path): os.remove(path)
+        if os.path.exists("work.jpg"): os.remove("work.jpg")
+
+# Запуск сервера здоровья для Render
+class Health(BaseHTTPRequestHandler):
+    def do_GET(self): self.send_response(200); self.end_headers(); self.wfile.write(b"OK")
+
+threading.Thread(target=lambda: HTTPServer(('0.0.0.0', int(os.environ.get("PORT", 8080))), Health).serve_forever(), daemon=True).start()
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    asyncio.run(dp.start_polling(bot))
