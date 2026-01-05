@@ -24,30 +24,29 @@ bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
 
 def clean_sts_data(text):
-    # Очистка текста от лишних символов для VIN
-    clean_text = re.sub(r'[^A-Z0-9А-Я]', '', text.upper())
+    # Убираем пробелы и переводим в верхний регистр для точного поиска
+    clean_text = re.sub(r'\s+', '', text.upper())
     
-    # 1. Ищем VIN (ровно 17 символов, где есть и буквы, и цифры)
-    vin_match = re.search(r'[A-Z0-9]{17}', clean_text)
+    # 1. VIN-номер: ищем строго 17 символов (цифры и латынь), 
+    # исключая слова вроде 'CERTIFICAT'
+    vin_match = re.search(r'[A-HJ-NPR-Z0-9]{17}', clean_text)
     vin = vin_match.group(0) if vin_match else "Не найден"
     
-    # 2. Ищем ГосНомер (российский стандарт: буква, 3 цифры, 2 буквы, регион)
-    plate_match = re.search(r'[ABCEHKMOPTXYАВЕКМНОРСТХУ]\d{3}[ABCEHKMOPTXYАВЕКМНОРСТХУ]{2}\d{2,3}', clean_text)
+    # 2. Госномер: ищем стандартный российский формат (буква, 3 цифры, 2 буквы, регион)
+    plate_match = re.search(r'[АВЕКМНОРСТУХA-Z]\d{3}[АВЕКМНОРСТУХA-Z]{2}\d{2,3}', clean_text)
     plate = plate_match.group(0) if plate else "Не найден"
     
-    # 3. Ищем Марку (берем строку после слов "Марка" или "Model")
-    model = "Не найдена"
+    # 3. Марка и модель: ищем текст после ключевых слов
+    model = "Не определена"
     lines = text.split('\n')
     for i, line in enumerate(lines):
-        if any(word in line.upper() for word in ["МАРКА", "MODEL", "МАРКА,"]):
-            # Берем текущую или следующую строку, если текущая короткая
-            candidate = line.split(':')[-1].split('(')[0].strip()
-            if len(candidate) < 3 and i+1 < len(lines):
-                candidate = lines[i+1].strip()
-            model = candidate if len(candidate) > 2 else model
+        if any(word in line.upper() for word in ["МАРКА", "MODEL"]):
+            # Берем строку, где обычно написано название авто
+            model = line.replace("Марка, модель", "").replace("Марка", "").strip()
             break
-
+            
     return {"plate": plate, "vin": vin, "model": model}
+
 
 @dp.message(Command("start"))
 async def start(m: types.Message):
