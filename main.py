@@ -8,7 +8,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import threading
 
 # --- ВСТАВЬТЕ ВАШИ КЛЮЧИ ТУТ ---
-API_TOKEN = '8143224792:AAHYP88775v3V9-fU8A_9D5B8B6B4C2D1E0'
+API_TOKEN = '8502395795:AAEO--Am5pbn2XL5X0SOV1gEBpzOHOErojk'
 OCR_API_KEY = 'K82846104288957'
 
 # Простейший сервер для Render, чтобы он не отключал бота
