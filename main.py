@@ -14,7 +14,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import threading
 
 # --- НАСТРОЙКИ ---
-API_TOKEN = '8502395795:AAEO--Am5pbn2XL5X0SOV1gEBpzOHOErojk'
+API_TOKEN = '8584130771:AAHPZyO7iONtgATW3HOMSHTs_MkQPWAE39U'
 OCR_API_KEY = 'K82846104288957'
 
 logging.basicConfig(level=logging.INFO)
